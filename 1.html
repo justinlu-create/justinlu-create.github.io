@@ -1,0 +1,243 @@
+﻿<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>語音轉文字</title>
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;700&display=swap" rel="stylesheet">
+    
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
+
+    <style>
+        /* --- 全域設定 --- */
+        body {
+            font-family: 'Noto Sans TC', sans-serif;
+            background: linear-gradient(135deg, #e0eaFC 0%, #cfdef3 100%);
+            height: 100vh;
+            margin: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            color: #333;
+        }
+
+        .container {
+            background-color: white;
+            width: 90%;
+            max-width: 600px;
+            padding: 40px;
+            border-radius: 20px;
+            box-shadow: 0 10px 25px rgba(0,0,0,0.1);
+            text-align: center;
+            position: relative;
+        }
+
+        h2 { margin-top: 0; color: #2c3e50; font-weight: 700; }
+        p.subtitle { color: #7f8c8d; font-size: 14px; margin-bottom: 30px; }
+
+        /* --- 按鈕區域 (排成一列) --- */
+        .btn-group {
+            display: flex;
+            justify-content: center;
+            gap: 15px; /* 按鈕之間的距離 */
+            margin-bottom: 20px;
+        }
+
+        button {
+            border: none;
+            padding: 12px 30px;
+            font-size: 16px;
+            border-radius: 50px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            font-weight: bold;
+        }
+
+        /* 錄音按鈕樣式 */
+        #startBtn {
+            background-color: #3498db;
+            color: white;
+            box-shadow: 0 4px 15px rgba(52, 152, 219, 0.3);
+        }
+        #startBtn:hover { background-color: #2980b9; transform: translateY(-2px); }
+        
+        #startBtn.listening {
+            background-color: #e74c3c;
+            box-shadow: 0 4px 15px rgba(231, 76, 60, 0.4);
+            animation: pulse 1.5s infinite;
+        }
+
+        /* 下載按鈕樣式 */
+        #downloadBtn {
+            background-color: #2ecc71; /* 綠色 */
+            color: white;
+            box-shadow: 0 4px 15px rgba(46, 204, 113, 0.3);
+        }
+        #downloadBtn:hover { background-color: #27ae60; transform: translateY(-2px); }
+
+        /* --- 結果顯示區 --- */
+        #result {
+            margin-top: 10px;
+            padding: 20px;
+            height: 250px; /* 稍微加高一點 */
+            overflow-y: auto;
+            background-color: #f8f9fa;
+            border-radius: 12px;
+            border: 1px solid #e9ecef;
+            text-align: left;
+            font-size: 16px;
+            line-height: 1.8;
+            white-space: pre-wrap; /* 保留換行 */
+        }
+
+        .interim { color: #95a5a6; }
+
+        @keyframes pulse {
+            0% { box-shadow: 0 0 0 0 rgba(231, 76, 60, 0.7); }
+            70% { box-shadow: 0 0 0 15px rgba(231, 76, 60, 0); }
+            100% { box-shadow: 0 0 0 0 rgba(231, 76, 60, 0); }
+        }
+
+        .footer-text {
+            position: fixed;
+            bottom: 15px;
+            right: 15px;
+            background-color: rgba(33, 37, 41, 0.85);
+            color: white;
+            padding: 8px 16px;
+            border-radius: 30px;
+            font-size: 12px;
+            letter-spacing: 1px;
+            backdrop-filter: blur(5px);
+            box-shadow: 0 4px 10px rgba(0,0,0,0.2);
+            z-index: 100;
+        }
+    </style>
+</head>
+<body>
+
+    <div class="container">
+        <h2>語音轉文字</h2>
+        <p class="subtitle">點擊錄音，結束後可直接下載 PDF 筆記</p>
+
+        <div class="btn-group">
+            <button id="startBtn">
+                <span>開始錄音</span>
+            </button>
+            <button id="downloadBtn">
+                <span>📥 下載 PDF</span>
+            </button>
+        </div>
+
+        <div id="result">
+            <span style="color: #aaa;">(等待錄音中...請按下開始按鈕並說話)</span>
+        </div>
+    </div>
+
+    <div class="footer-text">
+        元智大學電機系甲組二年級 呂丞智
+    </div>
+
+    <script>
+        // --- 語音辨識邏輯 ---
+        let finalContent = ""; // 用來暫存最終文字，供 PDF 使用
+
+        if (!('webkitSpeechRecognition' in window) && !('SpeechRecognition' in window)) {
+            alert("⚠️ 抱歉，您的瀏覽器不支援語音辨識，請使用 Google Chrome。");
+        } else {
+            const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+            const recognition = new SpeechRecognition();
+            
+            recognition.lang = 'zh-TW';
+            recognition.continuous = true;
+            recognition.interimResults = true;
+
+            const resultDiv = document.getElementById('result');
+            const startBtn = document.getElementById('startBtn');
+            const btnText = startBtn.querySelector('span');
+            let isListening = false;
+            let fullText = ""; 
+
+            startBtn.onclick = () => {
+                if (isListening) {
+                    recognition.stop();
+                } else {
+                    recognition.start();
+                }
+            };
+
+            recognition.onstart = () => {
+                isListening = true;
+                btnText.textContent = "🛑 停止錄音";
+                startBtn.classList.add("listening");
+            };
+
+            recognition.onend = () => {
+                isListening = false;
+                btnText.textContent = "開始錄音";
+                startBtn.classList.remove("listening");
+            };
+
+            recognition.onresult = (event) => {
+                let interimTranscript = '';
+                let finalSegment = '';
+
+                for (let i = event.resultIndex; i < event.results.length; ++i) {
+                    if (event.results[i].isFinal) {
+                        finalSegment += event.results[i][0].transcript;
+                    } else {
+                        interimTranscript += event.results[i][0].transcript;
+                    }
+                }
+                
+                if (finalSegment) {
+                    fullText += finalSegment + "，";
+                }
+
+                // 只有當有內容時才更新畫面，避免一開始的提示字被清空後畫面空白
+                if(fullText || interimTranscript){
+                    resultDiv.innerHTML = `<p><strong>${fullText}</strong><span class="interim">${interimTranscript}</span></p>`;
+                    finalContent = fullText; // 更新要列印的變數
+                    resultDiv.scrollTop = resultDiv.scrollHeight;
+                }
+            };
+        }
+
+        // --- 2. 下載 PDF 邏輯 ---
+        document.getElementById('downloadBtn').onclick = function() {
+            // 取得要列印的元素
+            const element = document.getElementById('result');
+            
+            // 檢查是否有內容
+            if(!finalContent && element.innerText.includes("等待錄音中")) {
+                alert("目前沒有內容可以下載喔！請先錄音。");
+                return;
+            }
+
+            // 設定 PDF 參數
+            const opt = {
+                margin:       10, // 邊距 (mm)
+                filename:     '我的語音筆記.pdf', // 檔名
+                image:        { type: 'jpeg', quality: 0.98 },
+                html2canvas:  { scale: 2 }, // 解析度，2 代表兩倍清晰
+                jsPDF:        { unit: 'mm', format: 'a4', orientation: 'portrait' }
+            };
+
+            // 執行轉換並下載
+            // html2pdf().from(element).set(opt).save(); 
+            // 為了讓 PDF 裡面的字更好看，我們稍微複製一份內容來處理樣式，再生成 PDF
+            
+            // 產生當前時間字串 e.g., 2024-05-20
+            const now = new Date();
+            const dateStr = now.toISOString().split('T')[0];
+            opt.filename = `語音筆記_${dateStr}.pdf`;
+
+            // 執行下載
+            html2pdf().set(opt).from(element).save();
+        };
+    </script>
+</body>
+</html>
